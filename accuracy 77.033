@@ -1,0 +1,196 @@
+rm(list=ls())
+setwd("C:/Users/Anish/Desktop/Kaggle")
+Titanictest = read.csv("test.csv",header = TRUE, stringsAsFactors = FALSE)
+Titanictrain=read.csv("train.csv",header = TRUE, stringsAsFactors = FALSE)
+test = Titanictest
+train = Titanictrain
+test$Survived = NA
+#Combining test and train
+combi = rbind(test,train)
+
+
+##Getting indices of all people with same surname in separate vectors
+vec = list()
+x=array()
+y=array()
+for(i in 1:nrow(combi))
+{
+  x[i]= combi$Name[i]
+  y[i] = substr(x[i],1,regexpr(",",x[i])-1)
+  vec[[i]] = grep(y[i],combi$Name,fixed = TRUE)
+}
+vec1 = unique(vec)
+
+
+##### Replacing names with only Mr,Miss,Mrs and Dr
+master_vector = grep("Master.",combi$Name, fixed=TRUE)
+miss_vector = grep("Miss.", combi$Name, fixed=TRUE)
+mrs_vector = grep("Mrs.", combi$Name, fixed=TRUE)
+mr_vector = grep("Mr.", combi$Name, fixed=TRUE)
+dr_vector = grep("Dr.", combi$Name, fixed=TRUE)
+
+rev_vector = grep("Rev.",combi$Name, fixed=TRUE)
+don_vector = grep("Don.",combi$Name, fixed=TRUE)
+dona = grep("Dona.",combi$Name, fixed=TRUE)
+major_vector = grep("Major.",combi$Name, fixed=TRUE)
+sir_vector = grep("Sir.",combi$Name, fixed=TRUE)
+col_vector = grep("Col.",combi$Name, fixed=TRUE)
+capt_vector = grep("Capt.",combi$Name, fixed=TRUE)
+jonkheer_vector = grep("Jonkheer.",combi$Name, fixed=TRUE)
+mme_vector = grep("Mme.",combi$Name, fixed=TRUE)
+ms_vector = grep("Ms.",combi$Name, fixed=TRUE)
+lady_vector = grep("Lady.",combi$Name, fixed=TRUE)
+mlle_vector = grep("Mlle.",combi$Name, fixed=TRUE)
+countess_vector = grep("Countess.",combi$Name, fixed=TRUE)
+
+#Combining all
+mr_vector = c(mr_vector,rev_vector,don_vector,major_vector,sir_vector,col_vector,capt_vector,jonkheer_vector)
+miss_vector=c(miss_vector,ms_vector,mlle_vector)
+mrs_vector=c(mrs_vector,mme_vector,lady_vector,countess_vector)
+mrs_vector=c(mrs_vector,dona)
+#Replacing
+for(i in master_vector)
+{
+  combi$Name[i]="Master"
+}
+for(i in miss_vector)
+{
+  combi$Name[i]="Miss"
+}
+for(i in  mrs_vector)
+{
+  combi$Name[i]="Mrs"
+}
+for(i in mr_vector)
+{
+  combi$Name[i]="Mr"
+}
+for(i in dr_vector)
+{
+  combi$Name[i]="Dr"
+}
+
+
+###Assign a number to each family
+combi$FamilyNumber = NA
+for(i in 1:length(vec1))
+{
+  for(n in 1:length(vec1[[i]]))
+  {
+    combi$FamilyNumber[vec1[[i]][n]] = i
+  }
+}
+
+############AVERAGING AGE######
+library(rpart)
+Agefit <- rpart(Age ~ Pclass + Sex + SibSp + Parch + Fare + Embarked + Name + FamilyNumber,
+                data=combi[!is.na(combi$Age),], method="anova")
+combi$Age[is.na(combi$Age)] <- predict(Agefit, combi[is.na(combi$Age),])
+summary(combi$Age)
+##########################
+
+
+
+###########
+#Scan data again for some issue 
+#Embarked and Fare have two missing values 
+table(combi$Embarked)
+which(combi$Embarked == '')
+combi$Embarked[c(420,1248)] = "S"
+#Replaced by S because a large majority boarded at S
+combi$Embarked <- factor(combi$Embarked)
+
+summary(combi$Fare)
+which(is.na(combi$Fare))
+combi$Fare[153] <- median(combi$Fare, na.rm=TRUE)
+#Our dataframe is now cleared of NAs. 
+#Now on to restriction number two: Random Forests in R can only digest factors with up to 32 levels.FamilyID had more.
+#Our FamilyID variable had almost double that. We could take two paths forward here, either change these levels to their underlying integers (using the unclass() function) and having the tree treat them as continuous variables, or manually reduce the number of levels to keep it under the threshold.
+#Let’s take the second approach. To do this we’ll copy the FamilyID column to a new variable, FamilyID2, and then convert it from a factor back into a character string with as.character(). We can then increase our cut-off to be a “Small” family from 2 to 3 people. Then we just convert it back to a factor and we’re done:
+combi$FamilyID2 <- combi$Family
+combi$FamilyID2 <- as.character(combi$Family)
+combi$FamilyID2[combi$Family <= 3] <- 'Small'
+combi$FamilyID2 <- factor(combi$FamilyID2)
+
+
+
+###Check if child
+for (i in 1:nrow(combi)) {
+  if (combi$Age[i] <= 12) {
+    combi$Child[i] = 1
+  } else {
+    combi$Child[i] = 2
+  }
+}
+table(combi$Survived,combi$Child)
+
+
+##Check if mother or not
+for(i in 1:nrow(combi)) {
+  if(combi$Name[i] == "Mrs" & combi$Parch[i] > 0) {
+    tempsub = subset(combi, combi$FamilyNumber == combi$FamilyNumber[i])
+    for(n in 1:nrow(tempsub))
+    {
+      if(tempsub$Child[n]==1)
+      {
+        combi$Mother[i] = 1
+        break
+      }
+      else
+      {
+        next()
+      }
+    }
+  }
+  else {
+    combi$Mother[i] = 2
+  }
+}
+
+for(i in 1:nrow(combi)) {
+  x = combi$SibSp[i]
+  y = combi$Parch[i]
+  combi$Family[i] = x + y + 1
+}
+
+
+#plot(combi$Ticket,combi$Survived)
+
+combi$Fare2 <- '30+'
+combi$Fare2[combi$Fare < 30 & combi$Fare >= 20] <- '20-30'
+combi$Fare2[combi$Fare < 20 & combi$Fare >= 10] <- '10-20'
+combi$Fare2[combi$Fare < 10] <- '<10'
+
+
+
+
+
+
+### separating test and train
+temptest = combi[1:418,]
+temptrain = combi[419:1309,]
+
+#######Random Forest
+install.packages("party")
+library(party)
+train1 = cforest(as.factor(Survived) ~ Pclass + as.factor(Name) +as.factor(Sex) + as.factor(Fare2) + Age + Child + FamilyID2 + FamilyNumber + Mother,data = temptrain,controls = cforest_unbiased(ntree=2000, mtry=3))
+####Logistic model gives a better result
+train2 = glm(as.factor(Survived) ~ Pclass + Name +Sex + Sex*Pclass+ Family+ SibSp + Parch+ Age + Child + FamilyNumber + Mother,data = temptrain)
+predictions =  predict(train1,newdata = temptest,OOB = TRUE ,type = "response")
+predictions2 = predict(train2,type = "response",newdata = temptest)
+
+#####Applying Threshold
+survival <- vector()
+for(i in 1:length(predictions)) {
+  if(predictions[i] > .5) {
+    survival[i] <- 1
+  } else {
+    survival[i] <- 0
+  }
+}
+
+MySubmission = data.frame(PassengerId = temptest$PassengerId, Survived = predictions)
+
+write.csv(MySubmission, "newkaggle.csv", row.names=FALSE)
+
+plot(combi$Survived,combi$Cabin)
