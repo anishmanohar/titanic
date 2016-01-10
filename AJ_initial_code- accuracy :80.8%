@@ -1,0 +1,153 @@
+setwd("C:/Users/anagha.j/Titanic")
+train <- read.csv("train.csv", stringsAsFactors=FALSE)
+test=read.csv("test.csv", stringsAsFactors=FALSE)
+titanicTrain = train
+titanicTest = test
+
+table(train$Survived)
+prop.table(table(train$Survived))
+
+#Since we see that most people died in training set we get our baseline prediction for test set that everyone there too dies 
+test$Survived <- rep(0,418) #repeats something for as many times as you tell it to .
+
+#id and Survived are the only two things you need to submit to kaggle . so we're making a new dataframe and writing it to a file 
+submit <- data.frame( PassengerId = test$PassengerId, Survived = test$Survived)
+write.csv(submit , file="theyallperished.csv", row.names = FALSE)
+
+#The data.frame command has created a new dataframe with the headings consistent with those from the test set, 
+#go ahead and take a look by previewing it. The write.csv command has sent that dataframe out to a CSV file, 
+#and importantly excluded the row numbers that would cause Kaggle to reject our submission.
+
+
+#Gender-class model
+table(train$Sex)
+prop.table(table(train$Sex,train$Survived))
+
+#Now Let's start digging in the age variable 
+
+summary(train$Age)
+train$Child <- 0
+train$Child[train$Age < 18] <- 1
+#you will see that any passengers with an age of NA have been assigned a zero, this is because the NA will fail any boolean test. This is what we wanted though, since we had decided to use the average age, which was an adult.
+aggregate( Survived ~ Child + Sex ,data = train, FUN=sum)
+#
+#The aggregate command takes a formula with the target variable on the left hand side of the tilde symbol and the variables to subset over on the right. We then tell it which dataframe to look at with the data argument, and finally what function to apply to these subsets.
+
+
+#We need to create a function that takes the subset vector as input and applies both the sum and length commands to it, 
+#and then does the division to give us a proportion. Here is the syntax:
+aggregate(Survived ~ Child + Sex ,data = train, FUN= function(x){sum(x)/length(x)})
+
+train$Fare2 <- '30+'
+train$Fare2[train$Fare < 30 & train$Fare >= 20] <- '20-30'
+train$Fare2[train$Fare < 20 & train$Fare >= 10] <- '10-20'
+train$Fare2[train$Fare < 10] <- '<10'
+aggregate(Survived ~ Fare2 + Pclass + Sex, data=train, FUN=function(x) {sum(x)/length(x)})
+
+#Class 3 Females also didn't survive much as seen in the aggregate above
+test$Survived <- 0
+test$Survived[test$Sex == 'female'] <- 1
+test$Survived[test$Sex == 'female' & test$Pclass == 3 & test$Fare >= 20] <- 0
+
+#FEATURE engineering 
+test$Survived <- NA
+combi <- rbind(train, test)
+combi$Name <- as.character(combi$Name)
+combi$Name[1]
+#strsplit, which stands for string split, to break apart our original name over these two symbols(, and .) Let’s try it out on Mr. #Braund:
+strsplit(combi$Name[1], split='[,.]')
+#Okay, good. Here we have sent strsplit the cell of interest, and given it some symbols to chose from when splitting the string up, either a comma or period. Those symbols in the square brackets are called regular expressions, though this is a very simple one, and if you plan on working with a lot of text I would certainly recommend getting used to using them!
+#Now, To extract just "Mr" we do this .. since strsplit is a doubly stacked container 
+strsplit(combi$Name[1], split='[,.]')[[1]][2]
+#Now to extract title from every row 
+combi$Title <- sapply(combi$Name, FUN=function(x){strsplit(x, split='[,.]')[[1]][2]})
+#Finally, we may wish to strip off those spaces from the beginning of the titles. Here we can just substitute the first occurrence of a space with nothing. We can use sub for this (gsub would replace all spaces, poor ‘the Countess’ would look strange then though):
+combi$Title <- sub('','',combi$Title)
+table(combi$Title)
+combi$Title[combi$Title %in% c('Mlle','Mme')] <- 'Mlle'
+combi$Title[combi$Title %in% c('Capt', 'Don', 'Major', 'Sir')] <- 'Sir'
+combi$Title[combi$Title %in% c('Dona', 'Lady', 'the Countess', 'Jonkheer')] <- 'Lady'
+combi$Title <- factor(combi$Title)
+combi$FamilySize <- combi$SibSp + combi$Parch + 1
+combi$Surname <- sapply(combi$Name, FUN=function(x) {strsplit(x, split='[,.]')[[1]][1]})
+combi$FamilyID <- paste(as.character(combi$FamilySize), combi$Surname, sep="")
+famID <- data.frame(table(combi$FamilyID))
+famID <- famID[famID$Freq <= 2,]
+combi$FamilyID[combi$FamilyID %in% famID$Var1] <- 'Small'
+combi$FamilyID <- factor(combi$FamilyID)
+train <- combi[1:891,]
+test <- combi[892:1309,]
+library(rpart)
+fit <- rpart(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title + FamilySize + FamilyID ,
+data=train, method="class")
+Prediction <- predict(fit, test, type = "class")
+submit <- data.frame(PassengerId = test$PassengerId, Survived = Prediction)
+write.csv(submit, file = "myseconfdtree.csv", row.names = FALSE)
+
+#### ...................Random Forest .......................###
+
+#Clean up missing values in our dataset 
+summary(combi$Age)
+#263 values out of 1309 were missing this whole time, that’s a whopping 20%! A few new pieces of syntax to use. 
+#Instead of subsetting by boolean logic, we can use the R function is.na(), 
+#and it’s reciprocal !is.na() (the bang symbol represents ‘not’). 
+#This subsets on whether a value is missing or not. 
+#We now also want to use the method=”anova” version of our decision tree,
+#as we are not trying to predict a category any more, but a continuous variable. 
+#So let’s grow a tree on the subset of the data with the age values available, and then replace those that are missing:
+
+Agefit <- rpart(Age ~ Pclass + Sex + SibSp + Parch + Fare + Embarked + Title + FamilySize,
+data=combi[!is.na(combi$Age),], method="anova")
+combi$Age[is.na(combi$Age)] <- predict(Agefit, combi[is.na(combi$Age),])
+summary(combi$Age)
+#NA's are now gone 
+
+#Scan data again for some issue 
+#Embarked and Fare have two missing values 
+table(combi$Embarked)
+which(combi$Embarked == '')
+combi$Embarked[c(62,830)] = "S"
+#Replaced by S because a large majority boarded at S
+combi$Embarked <- factor(combi$Embarked)
+
+summary(combi$Fare)
+which(is.na(combi$Fare))
+combi$Fare[1044] <- median(combi$Fare, na.rm=TRUE)
+#Our dataframe is now cleared of NAs. 
+#Now on to restriction number two: Random Forests in R can only digest factors with up to 32 levels.FamilyID had more.
+#Our FamilyID variable had almost double that. We could take two paths forward here, either change these levels to their underlying integers (using the unclass() function) and having the tree treat them as continuous variables, or manually reduce the number of levels to keep it under the threshold.
+#Let’s take the second approach. To do this we’ll copy the FamilyID column to a new variable, FamilyID2, and then convert it from a factor back into a character string with as.character(). We can then increase our cut-off to be a “Small” family from 2 to 3 people. Then we just convert it back to a factor and we’re done:
+combi$FamilyID2 <- combi$FamilyID
+combi$FamilyID2 <- as.character(combi$FamilyID2)
+combi$FamilyID2[combi$FamilySize <= 3] <- 'Small'
+combi$FamilyID2 <- factor(combi$FamilyID2)
+
+#Okay, we’re down to 22 levels so we’re good to split the test and train sets back up as we did last lesson and grow a Random Forest. Install and load the package randomForest:
+install.packages('randomForest')
+library(randomForest)
+#
+#Because the process has the two sources of randomness that we discussed earlier, it is a good idea to set the random seed in R before you begin. This makes your results reproducible next time you load the code up, otherwise you can get different classifications for each run. 
+set.seed(415)
+
+#The number inside isn’t important, you just need to ensure you use the same seed number each time so that the same random numbers are generated inside the Random Forest function.
+
+# Split up the data using subset
+
+fit <- randomForest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title + FamilySize + FamilyID2, data=train, importance=TRUE, ntree=2000)
+#
+#Instead of specifying method=”class” as with rpart, we force the model to predict our classification by temporarily changing our target variable to a factor with only two levels using as.factor(). The importance=TRUE argument allows us to inspect variable importance as we’ll see, and the ntree argument specifies how many trees we want to grow
+
+Prediction <- predict(fit, test)
+submit <- data.frame(PassengerId = test$PassengerId, Survived = Prediction)
+write.csv(submit, file = "firstforest.csv", row.names = FALSE)
+
+
+#Party
+install.packages('party')
+library(party)
+set.seed(415)
+fit <- cforest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title + FamilySize + FamilyID,
+data = train, controls=cforest_unbiased(ntree=2000, mtry=3))
+Prediction <- predict(fit, test, OOB=TRUE, type = "response")
+submit <- data.frame(PassengerId = test$PassengerId, Survived = Prediction)
+write.csv(submit, file = "secondforest.csv", row.names = FALSE)
