@@ -164,5 +164,4 @@ for(i in 1:length(predictions2)) {
 MySubmission = data.frame(PassengerId = temptest$PassengerId, Survived = survival)
 
 write.csv(MySubmission, "kaggle6.csv", row.names=FALSE)
-
 plot(combi$Survived,combi$Cabin)
