@@ -1,117 +1,130 @@
-### INITIALIZE ###
+# Trevor Stephens - 18 Jan 2014
+# Titanic: Getting Started With R - Part 5: Random Forests
+# Full guide available at http://trevorstephens.com/
+
+### INITIALIZATION ################################################################################################
+# Set working directory and import datafiles
+rm(list=ls())
 setwd("C:/Users/anagha.j/Titanic")
-
-######################################################################################################
-
+###################################################################################################################
 
 
 
-### LIBRARY CALL ###
-library("rpart")
-#library("rpart.plot")	
+### READING DATA ##################################################################################################
+train <- read.csv("train.csv")
+test <- read.csv("test.csv")
+###################################################################################################################
+
+
+### LIBRARY CALLS #################################################################################################
+# Install and load required packages for decision trees and forests
+library(rpart)
 library(randomForest)
 library(party)
-#library("rattle")
-
-######################################################################################################
+###################################################################################################################
 
 
+### FEATURE ENGINEERING ###########################################################################################
 
-### READING DATA ###
-train <- read.csv("train.csv", stringsAsFactors=FALSE)
-test=read.csv("test.csv", stringsAsFactors=FALSE)
-test$Survived <- 0
-
-#Backup.................
-titanicTrain = train
-titanicTest = test
-#......................
-#######################################################################################################
-
-
-
-### CLEANING DATA ###
+# Join together the test and train sets for easier feature engineering
+test$Survived <- NA
 combi <- rbind(train, test)
+
+# Convert to a string
 combi$Name <- as.character(combi$Name)
-strsplit(combi$Name[1], split='[,.]')
-strsplit(combi$Name[1], split='[,.]')[[1]]
-strsplit(combi$Name[1], split='[,.]')[[1]][2]
+
+# Engineered variable: Title
 combi$Title <- sapply(combi$Name, FUN=function(x) {strsplit(x, split='[,.]')[[1]][2]})
 combi$Title <- sub(' ', '', combi$Title)
-combi$Title[combi$PassengerId == 797] <- 'Mrs' # female doctor
-combi$Title[combi$Title %in% c('Lady', 'the Countess', 'Mlle', 'Mee', 'Ms')] <- 'Miss'
-combi$Title[combi$Title %in% c('Capt', 'Don', 'Major', 'Sir', 'Col', 'Jonkheer', 'Rev', 'Dr', 'Master')] <- 'Mr'
-combi$Title[combi$Title %in% c('Dona')] <- 'Mrs'
+# Combine small title groups
+combi$Title[combi$Title %in% c('Mme', 'Mlle')] <- 'Mlle'
+combi$Title[combi$Title %in% c('Capt', 'Don', 'Major', 'Sir')] <- 'Sir'
+combi$Title[combi$Title %in% c('Dona', 'Lady', 'the Countess', 'Jonkheer')] <- 'Lady'
+# Convert to a factor
 combi$Title <- factor(combi$Title)
 
-# Passenger on row 62 and 830 do not have a value for embarkment. 
-# Since many passengers embarked at Southampton, we give them the value S.
-# We code all embarkment codes as factors.
+# Engineered variable: Family size
+combi$FamilySize <- combi$SibSp + combi$Parch + 1
+
+# Engineered variable: Family
+combi$Surname <- sapply(combi$Name, FUN=function(x) {strsplit(x, split='[,.]')[[1]][1]})
+combi$FamilyID <- paste(as.character(combi$FamilySize), combi$Surname, sep="")
+combi$FamilyID[combi$FamilySize <= 2] <- 'Small'
+# Delete erroneous family IDs
+famIDs <- data.frame(table(combi$FamilyID))
+famIDs <- famIDs[famIDs$Freq <= 2,]
+combi$FamilyID[combi$FamilyID %in% famIDs$Var1] <- 'Small'
+# Convert to a factor
+combi$FamilyID <- factor(combi$FamilyID)
+###################################################################################################################
+
+
+### CLEANING THE DATA #############################################################################################
+# Fill in Age NAs
+summary(combi$Age)
+Agefit <- rpart(Age ~ Pclass + Sex + SibSp + Parch + Fare + Embarked + Title + FamilySize, 
+                data=combi[!is.na(combi$Age),], method="anova")
+combi$Age[is.na(combi$Age)] <- predict(Agefit, combi[is.na(combi$Age),])
+# Check what else might be missing
+summary(combi)
+# Fill in Embarked blanks
+summary(combi$Embarked)
+which(combi$Embarked == '')
 combi$Embarked[c(62,830)] = "S"
 combi$Embarked <- factor(combi$Embarked)
-
-# Passenger on row 1044 has an NA Fare value. Let's replace it with the median fare value.
+# Fill in Fare NAs
+summary(combi$Fare)
+which(is.na(combi$Fare))
 combi$Fare[1044] <- median(combi$Fare, na.rm=TRUE)
 
-### FEATURE ENGINEERING ####..........................................................................
-# Create new column -> family_size
-combi$family_size <- combi$SibSp + combi$Parch + 1
-combi$Surname <- sapply(combi$Name , FUN=function(x){strsplit(x, split='[,.]')[[1]][1]})
-combi$FamilyID <- paste(as.character(combi$family_size) , combi$Surname , sep = "")
-famID <- data.frame(table(combi$FamilyID))
-famID <- famID[famID$Freq <= 2,]
-combi$FamilyID[combi$FamilyID %in% famID$Var1] <- 'Small'
-combi$FamilyID <- factor(combi$FamilyID)
+# New factor for Random Forests, only allowed <32 levels, so reduce number
 combi$FamilyID2 <- combi$FamilyID
+# Convert back to string
 combi$FamilyID2 <- as.character(combi$FamilyID2)
 combi$FamilyID2[combi$FamilySize <= 3] <- 'Small'
+# And convert back to factor
 combi$FamilyID2 <- factor(combi$FamilyID2)
 
-#......................................................................................................
+###Trying to group by Ticket Number
+#library(stringr)
+#x <- str_extract_all(strLine,"\\(?[0-9,.]+\\)?")[[1]]
+#combi$Ticket2 <- as.character(combi$Ticket)
+# Remove all digits before period
+#matches = gsub("^.*\\.","", combi$Ticket2 )
 
-# How to fill in missing Age values?
-# We make a prediction of a passengers Age using the other variables and a decision tree model. 
-# This time you give method="anova" since you are predicting a continuous variable.
+#Remove all charecters except digits in string
+#matches <- regmatches(combi$Ticket2, gregexpr("[[:digit:]]+",combi$Ticket2 ))
+#install.packages("qdap")
 
-predicted_age <- rpart(Age ~ Pclass + Sex + SibSp + Parch + Fare + Embarked + Title + family_size,
-                       data=combi[!is.na(combi$Age),], method="anova")
-combi$Age[is.na(combi$Age)] <- predict(predicted_age, combi[is.na(combi$Age),])
-
-
-#######################################################################################################
-
-#Convert All to factor 
-combi$Survived <-  factor(combi$Survived)
-combi$Title <-  factor(combi$Title)
-combi$Sex <- factor(combi$Sex)
-combi$Sex <- factor(combi$Sex)
-combi$Cabin <- factor(combi$Cabin)
-combi$Surname <- factor(combi$Surname)
-combi$Ticket <- factor(combi$Ticket)
+###################################################################################################################
 
 
+### CREATING MODELS ###############################################################################################
+# Split back into test and train sets
+train <- combi[1:891,]
+test <- combi[892:1309,]
 
-### CREATING MODEL ###
-
-train_new <- combi[1:891,]
-test_new <- combi[892:1309,]
-
-test_new$Survived <- NULL
-
-# train_new and test_new are available in the workspace
-str(train_new)
-str(test_new)
-
-fit <- cforest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title + Ticket + family_size + FamilyID,
-               data = train_new, controls=cforest_unbiased(ntree=2500, mtry=3))
-Prediction <- predict(fit, test_new, OOB=TRUE, type = "response")
-#################################################################################################
-
-
-
-### SUBMIT TO KAGGLE ###
+# Build Random Forest Ensemble
+set.seed(415)
+fit <- randomForest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title + FamilySize + FamilyID2,
+                    data=train, importance=TRUE, ntree=2000)
+# Look at variable importance
+varImpPlot(fit)
+# Now let's make a prediction and write a submission file
+Prediction <- predict(fit, test)
 submit <- data.frame(PassengerId = test$PassengerId, Survived = Prediction)
-write.csv(submit, file = "formattedcforest.csv", row.names = FALSE)
+write.csv(submit, file = "firstforest.csv", row.names = FALSE)
 
-###############################################################################################
+# Build condition inference tree Random Forest
+set.seed(415)
+fit <- cforest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title + FamilySize + FamilyID,
+               data = train, controls=cforest_unbiased(ntree=2000, mtry=3)) 
+###################################################################################################################
 
+
+#SUBMIT TO KAGGLE #################################################################################################
+# Now let's make a prediction and write a submission file
+Prediction <- predict(fit, test, OOB=TRUE, type = "response")
+submit <- data.frame(PassengerId = test$PassengerId, Survived = Prediction)
+write.csv(submit, file = "ciforest.csv", row.names = FALSE)
+###################################################################################################################
