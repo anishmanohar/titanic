@@ -98,17 +98,6 @@ test_new <- combi[892:1309,]
 
 test_new$Survived <- NULL
 
-# Find Cabin Class 
-#train_new$Cabin <- substr(train_new$Cabin,1,1)
-#train_new$Cabin[train_new$Cabin == ""] <- "H"
-#train_new$Cabin[train_new$Cabin == "T"] <- "H"
-
-#test_new$Cabin <- substr(test_new$Cabin,1,1)
-#test_new$Cabin[test_new$Cabin == ""] <- "H"
-
-#train_new$Cabin <- factor(train_new$Cabin)
-#test_new$Cabin <- factor(test_new$Cabin)
-
 # train_new and test_new are available in the workspace
 str(train_new)
 str(test_new)
